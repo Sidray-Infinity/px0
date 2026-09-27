@@ -47,7 +47,7 @@ sequenceDiagram
 1. Socket Binding: `listen(*host, *port)` binds an ephemeral or user-specified TCP socket immediately.
 1. Instant Root Tree Extraction: Before descending into subdirectories, `ix.Build()` extracts and populates the root directory entries (`dir=""`), publishing them directly to `ix.children[""]`. When the browser makes its initial request to `/api/tree`, it immediately renders the root tree nodes without waiting for the deep repository scan to finish.
 
-1. Non-Blocking Browser Launch: `go openBrowser(url)` spawns the platform-specific browser opener (`xdg-open` on Linux, `open` on macOS, `rundll32` on Windows) in a separate goroutine.
+1. Non-Blocking Browser Launch: `go openBrowser(url, app)` runs in a separate goroutine. It honours `$BROWSER` first. Unless `-no-app` is given (or on WSL), it then opens a Chromium app window with `--app=<url>`, which has no tabs or address bar and passes Cmd/Ctrl+W to the page. On macOS that is `open -na` for Google Chrome, Microsoft Edge, Brave or Chromium: `-n` delivers the flag to an already running browser, and a missing app fails in ~30 ms. Elsewhere it launches the first of those found on `PATH` (or in the standard install folders on Windows), in its own process group so Ctrl-C in px0's terminal cannot kill a browser that px0 started. Once open, an app window is the same engine and costs about the same memory as a tab. It does add ~150 ms to launch, because Chrome only accepts `--app` on a command line and has to start a short-lived process that hands the window to the running browser. If no Chromium browser is found, px0 falls back to the platform-specific browser opener (`xdg-open` on Linux, `open` on macOS, `rundll32` on Windows).
 1. Concurrent Tree Walk & Git Status: Indexing runs inside a background goroutine. A dedicated goroutine runs `gitStatus(ix.root)` in parallel with the file walk so that subprocess overhead overlaps the walk rather than adding to it.
 1. Background Language Server Discovery: `lsp.Available()` checks `$PATH` using `exec.LookPath` across standard binary locations asynchronously.
 
@@ -139,7 +139,7 @@ func (s *Server) scavenge() {
 
 Because px0 uses a client-server architecture rather than embedding Electron:
 - **Host Server**: The Go backend daemon occupies ~20–30 MB RSS, handling indexing, symbol discovery, regex search, and git operations.
-- **Client Browser Tab**: The frontend web client runs in the user's existing browser, allocating ~80–150 MB for the DOM, V8 runtime, and GPU compositing. Memory is kept strictly bounded because px0's bespoke virtualized scroller mounts only ~60 active rows regardless of file size.
+- **Client Browser Tab**: The frontend web client runs in the user's existing browser, as a tab or a Chromium app window (the same renderer cost), allocating ~80–150 MB for the DOM, V8 runtime, and GPU compositing. Memory is kept strictly bounded because px0's bespoke virtualized scroller mounts only ~60 active rows regardless of file size.
 - **Combined Impact**: Total system footprint is ~100–180 MB (~85–90% lower than the ~1,400 MB footprint of desktop Electron IDEs). On remote devboxes and containers, the host pays strictly the ~20–30 MB server cost.
 
 ### Gzip Buffer Pooling

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -1266,6 +1267,30 @@ func TestContentSecurityPolicyHeader(t *testing.T) {
 	}
 }
 
-
-
-
+func TestOpenAppWindowPassesAppFlag(t *testing.T) {
+	if runtime.GOOS == "windows" || isWSL() {
+		t.Skip("fake browser is a shell script; WSL opens the Windows host browser instead")
+	}
+	dir := t.TempDir()
+	got := filepath.Join(dir, "args")
+	fake := "google-chrome"
+	if runtime.GOOS == "darwin" {
+		fake = "open" // open -na <app> --args --app=<url>
+	}
+	if err := os.WriteFile(filepath.Join(dir, fake), []byte("#!/bin/sh\necho \"$@\" > "+got+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	const u = "http://127.0.0.1:7777/?path=main.go"
+	if !openAppWindow(u) {
+		t.Fatal("openAppWindow found no browser")
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if b, _ := os.ReadFile(got); strings.Contains(string(b), "--app="+u) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fake browser never received --app=%s", u)
+		}
+	}
+}

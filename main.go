@@ -31,6 +31,7 @@ func main() {
 		port         = flag.Int("port", 7777, "port to listen on (0 picks a free one)")
 		host         = flag.String("host", "127.0.0.1", "address to bind")
 		noOpen       = flag.Bool("no-open", false, "do not launch a browser")
+		noApp        = flag.Bool("no-app", false, "open a browser tab instead of a Chrome/Edge app window")
 		noLSP        = flag.Bool("no-lsp", false, "do not use language servers, even if installed")
 		noGit        = flag.Bool("no-git", false, "disable git awareness")
 		dev          = flag.String("dev", "", "serve the UI from this source directory instead of the embedded copy")
@@ -202,7 +203,7 @@ func main() {
 	// Launch browser immediately without blocking startup.
 	if !*noOpen {
 		tBrowser := time.Now()
-		go openBrowser(url)
+		go openBrowser(url, !*noApp)
 		if uiVerbose {
 			uiStatus("ok", "spawned browser launcher", fmtDuration(time.Since(tBrowser)), 0, os.Stdout)
 		}
@@ -425,12 +426,15 @@ func listen(host string, port int) (net.Listener, string, error) {
 	return nil, "", fmt.Errorf("no free port available starting from %d", port)
 }
 
-func openBrowser(url string) {
+func openBrowser(url string, app bool) {
 	// If BROWSER environment variable is set, try that first
 	if b := os.Getenv("BROWSER"); b != "" {
 		if cmd := exec.Command(b, url); cmd.Start() == nil {
 			return
 		}
+	}
+	if app && openAppWindow(url) {
+		return
 	}
 
 	var cmds []*exec.Cmd
@@ -473,6 +477,51 @@ func openBrowser(url string) {
 			return
 		}
 	}
+}
+
+// appBrowsers lists Chromium browsers that support --app: app names for
+// `open -a` on macOS, otherwise executables found on PATH or by full path.
+func appBrowsers() []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{"Google Chrome", "Microsoft Edge", "Brave Browser", "Chromium"}
+	case "windows":
+		return []string{
+			os.ExpandEnv(`${ProgramFiles}\Google\Chrome\Application\chrome.exe`),
+			os.ExpandEnv(`${ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe`),
+			os.ExpandEnv(`${LocalAppData}\Google\Chrome\Application\chrome.exe`),
+			os.ExpandEnv(`${ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe`),
+		}
+	default:
+		return []string{"google-chrome", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"}
+	}
+}
+
+// openAppWindow opens url in a Chromium app window. Reports false when no such browser is found.
+func openAppWindow(url string) bool {
+	if isWSL() {
+		return false // keep opening the Windows host's browser
+	}
+	arg := "--app=" + url
+	for _, b := range appBrowsers() {
+		if runtime.GOOS == "darwin" {
+			if exec.Command("open", "-na", b, "--args", arg).Run() == nil {
+				return true
+			}
+			continue
+		}
+		p, err := exec.LookPath(b)
+		if err != nil {
+			continue
+		}
+		cmd := exec.CommandContext(context.Background(), p, arg)
+		setProcessGroup(cmd) // a browser started here must survive Ctrl-C in this terminal
+		if cmd.Start() == nil {
+			go cmd.Wait()
+			return true
+		}
+	}
+	return false
 }
 
 func isWSL() bool {

@@ -23,7 +23,7 @@ px0's file explorer eliminates unnecessary clicks by automatically collapsing si
 - **Multi-Tab Document Bar**:
   - Open multiple files in tabs and switch between them.
   - Switch tabs using keyboard shortcuts (`Ctrl+Tab`, `Alt+1` through `Alt+9`).
-  - Close active tabs with `Alt+W` (or `Cmd/Ctrl+W`).
+  - Close active tabs with `Alt+W` (or `Cmd/Ctrl+W`, which a browser tab keeps for itself but a px0 app window passes on; with no file open it closes the app window).
   - Right-click a tab for **Close**, **Close All**, **Close Others**, **Close to the Right**, or **Close to the Left**. Actions without matching tabs are disabled.
   - Image tabs, Markdown previews, diff views, and external standard library files sit cleanly alongside source files.
 

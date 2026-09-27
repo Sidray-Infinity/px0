@@ -78,6 +78,7 @@ px0 -base-path /rev-123/ -host 0.0.0.0 -port 7777 ~/workspace
 | `-port N` | `7777` | Port to listen on (`0` picks an ephemeral free port) |
 | `-host H` | `127.0.0.1` | Network address to bind |
 | `-no-open` | `false` | Suppress automatic browser launch (ideal for servers) |
+| `-no-app` | `false` | Open a regular browser tab instead of a Chrome/Edge/Brave app window |
 | `-no-lsp` | `false` | Disable Language Server discovery |
 | `-no-git` | `false` | Disable Git status checks and diff viewing |
 | `-agent H` | none | Pin active coding agent harness for session |

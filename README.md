@@ -63,6 +63,10 @@ px0 main.go:42
 # Review a GitHub pull request
 px0 https://github.com/owner/repo/pull/123
 
+# px0 opens in a Chrome/Edge/Brave app window (no tabs or address bar) when one
+# is installed, otherwise in a browser tab. Force a regular tab:
+px0 -no-app .
+
 # Remote or headless server mode
 px0 -host 0.0.0.0 -port 7777 ~/workspace
 
@@ -102,7 +106,7 @@ make build
 ./benchmark.sh --memory bench-repos/linux
 ```
 
-> **Architecture & Memory Accounting**: px0 separates the lightweight native Go daemon from the browser-rendered UI. The Go server consumes ~20–30 MB resident RAM (RSS). The active browser tab allocates ~80–150 MB for DOM nodes, V8 JS runtime, and GPU compositing. Combined, the total local memory footprint is ~100–180 MB (~85–90% lighter than Electron IDEs like VS Code at ~1,440 MB, which bundle dedicated Chromium and Node runtimes). In remote or container environments (`px0 -host 0.0.0.0`), the remote host pays strictly the ~20–30 MB server cost. See [BENCHMARKS.md](BENCHMARKS.md) for full methodology and breakdowns.
+> **Architecture & Memory Accounting**: px0 separates the lightweight native Go daemon from the browser-rendered UI. The Go server consumes ~20–30 MB resident RAM (RSS). The active browser tab (or Chrome/Edge app window, which costs about the same) allocates ~80–150 MB for DOM nodes, V8 JS runtime, and GPU compositing. Combined, the total local memory footprint is ~100–180 MB (~85–90% lighter than Electron IDEs like VS Code at ~1,440 MB, which bundle dedicated Chromium and Node runtimes). In remote or container environments (`px0 -host 0.0.0.0`), the remote host pays strictly the ~20–30 MB server cost. See [BENCHMARKS.md](BENCHMARKS.md) for full methodology and breakdowns.
 
 ## Documentation
 

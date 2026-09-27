@@ -24,8 +24,9 @@ import { submitBatch } from './agent.js';
 import { reindexWorkspace } from './panels.js';
 
 /* Each entry lists alternative combos, written as for keyLabel in state.js so
-   they show as ⌘/⌥/⇧ on a Mac and Ctrl/Alt/Shift elsewhere. Browsers keep
-   Ctrl+W and Cmd+W for themselves, so Alt+W is the close shortcut shown. */
+   they show as ⌘/⌥/⇧ on a Mac and Ctrl/Alt/Shift elsewhere. Browser tabs keep
+   Ctrl+W and Cmd+W for themselves (app windows pass them on), so Alt+W is the
+   close shortcut shown. */
 export const SHORTCUTS = [
   [['Mod+,'], 'Open settings'],
   [['Mod+K'], 'Quick search / palette'], [['Mod+P'], 'Go to file'],
@@ -148,6 +149,8 @@ export function initShortcuts() {
     if (mod && !e.shiftKey && (e.key === 'd' || e.key === 'D')) { if (S.meta?.git) { e.preventDefault(); toggleDiff(); } return; }
     // Alt shortcuts match e.code: on a Mac, Option+letter types a symbol, so e.key is not the letter.
     if ((mod && (e.key === 'w' || e.key === 'W')) || (e.altKey && e.code === 'KeyW')) {
+      // With no file tab open, Mod+W is left to the browser so it closes a px0 app window.
+      if (mod && S.active < 0) return;
       e.preventDefault();
       e.stopPropagation();
       if (S.active >= 0) closeTab(S.active);
