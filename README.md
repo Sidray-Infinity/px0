@@ -64,7 +64,8 @@ px0 main.go:42
 px0 https://github.com/owner/repo/pull/123
 
 # px0 opens in a Chrome/Edge/Brave app window (no tabs or address bar) when one
-# is installed, otherwise in a browser tab. Force a regular tab:
+# is installed, otherwise in a browser tab. In the app window, Cmd+Q (Ctrl+Shift+Q
+# on Linux/Windows) closes only that window, not the browser. Force a regular tab:
 px0 -no-app .
 
 # Remote or headless server mode

@@ -118,6 +118,13 @@ export function initShortcuts() {
       return;
     }
 
+    // An app window gets Quit (Cmd+Q, Ctrl+Shift+Q) before the browser does: close only this window.
+    if ((isMac ? e.metaKey && !e.shiftKey : e.ctrlKey && e.shiftKey) && !e.altKey && (e.key === 'q' || e.key === 'Q')) {
+      e.preventDefault();
+      window.close();
+      return;
+    }
+
     if (mod && (e.key === ',' || e.key === '<')) {
       e.preventDefault();
       openSettings('ui');
