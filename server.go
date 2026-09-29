@@ -29,18 +29,8 @@ import (
 //go:embed web
 var embedded embed.FS
 
-// assets is the embedded web/ directory, or the one on disk under -dev.
+// assets is the embedded web/ directory.
 var assets fs.FS = embedded
-
-// useDiskAssets serves web/ from the filesystem so the UI can be edited without
-// rebuilding. Development convenience only.
-func useDiskAssets(dir string) error {
-	if _, err := os.Stat(filepath.Join(dir, "web", "index.html")); err != nil {
-		return err
-	}
-	assets = os.DirFS(dir)
-	return nil
-}
 
 func cleanBasePath(p string) string {
 	p = strings.TrimSpace(p)
@@ -134,6 +124,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc(s.routePath("/api/close"), s.handleClose)
 	s.mux.HandleFunc(s.routePath("/api/raw"), s.handleRaw)
 	s.mux.HandleFunc(s.routePath("/api/markdown"), s.handleMarkdown)
+	s.mux.HandleFunc(s.routePath("/api/table"), s.handleTable)
 	s.mux.HandleFunc(s.routePath("/api/diff"), s.handleDiff)
 	s.mux.HandleFunc(s.routePath("/api/gutter"), s.handleGutter)
 	s.mux.HandleFunc(s.routePath("/api/stream"), s.handleEventStream)
@@ -146,6 +137,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc(s.routePath("/api/git/push"), s.handleGitPush)
 	s.mux.HandleFunc(s.routePath("/api/git/pull"), s.handleGitPull)
 	s.mux.HandleFunc(s.routePath("/api/git/log"), s.handleGitLog)
+	s.mux.HandleFunc(s.routePath("/api/unpushed"), s.handleUnpushed)
+	s.mux.HandleFunc(s.routePath("/api/commitfiles"), s.handleCommitFiles)
+	s.mux.HandleFunc(s.routePath("/api/commitdetail"), s.handleCommitDetail)
 	s.mux.HandleFunc(s.routePath("/api/search"), s.handleSearch)
 	s.mux.HandleFunc(s.routePath("/api/outline"), s.handleOutline)
 	s.mux.HandleFunc(s.routePath("/api/def"), s.handleDef)
@@ -159,6 +153,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc(s.routePath("/api/lsp/setup"), s.handleLSPSetup)
 	s.mux.HandleFunc(s.routePath("/api/lsp/install"), s.handleLSPInstall)
 	s.mux.HandleFunc(s.routePath("/api/lsp/start"), s.handleLSPStart)
+	s.mux.HandleFunc(s.routePath("/api/lsp/stop"), s.handleLSPStop)
+	s.mux.HandleFunc(s.routePath("/api/lsp/servers"), s.handleLSPServers)
 	s.mux.HandleFunc(s.routePath("/api/agent/harnesses"), s.handleAgentHarnesses)
 	s.mux.HandleFunc(s.routePath("/api/agent/select"), s.handleAgentSelect)
 	s.mux.HandleFunc(s.routePath("/api/agent/edit"), s.handleAgentEdit)
@@ -227,6 +223,8 @@ func (s *Server) scavenge() {
 	}
 }
 
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none';"
+
 // ServeHTTP delegates incoming HTTP requests to the configured ServeMux,
 // recording request timing and updating access timestamps.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +267,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var out http.ResponseWriter = rec
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && !isSSE {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Add("Vary", "Accept-Encoding")
@@ -437,6 +436,7 @@ func (s *Server) SetPR(p *prSession) {
 		if s.ix != nil {
 			s.ix.SetDiffBase(p.diffBase)
 			s.ix.SetPRHead(p.meta.HeadSHA)
+			s.ix.SetPushedHead(p.meta.HeadSHA)
 		}
 		if s.gitWatcher != nil {
 			s.gitWatcher.Trigger()
@@ -554,6 +554,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 			"diffBaseWarning": p.diffBaseWarning,
 			"headSHA":         p.meta.HeadSHA,
 			"url":             p.target.URL,
+			"files":           s.ix.PRFiles(),
 		}
 		p.mu.Unlock()
 	}
@@ -699,7 +700,7 @@ func (s *Server) handleLSPCalls(w http.ResponseWriter, r *http.Request) {
 // by the time the reader wants to hover or jump, and so the status indicator
 // reflects reality without anyone having to ask a question first.
 func (s *Server) handleLSPWarm(w http.ResponseWriter, r *http.Request) {
-	_, rel, ok := s.resolvePath(r.URL.Query().Get("path"))
+	abs, rel, ok := s.resolvePath(r.URL.Query().Get("path"))
 	if !ok {
 		fail(w, 400, "bad path")
 		return
@@ -714,7 +715,7 @@ func (s *Server) handleLSPWarm(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(ms)*time.Millisecond)
 	defer cancel()
 	// The spawn keeps going even when this call gives up waiting on it.
-	s.lsp.client(ctx, rel)
+	_ = s.lsp.EnsureOpen(ctx, abs, rel)
 	writeJSON(w, s.lspBrief(rel))
 }
 
@@ -810,6 +811,18 @@ var imageExt = map[string]bool{
 	".svg": true, ".ico": true, ".bmp": true, ".avif": true,
 }
 
+var imageMime = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".svg":  "image/svg+xml",
+	".ico":  "image/x-icon",
+	".bmp":  "image/bmp",
+	".avif": "image/avif",
+}
+
 func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	abs, rel, ok := s.resolvePath(q.Get("path"))
@@ -819,6 +832,37 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	st, err := os.Stat(abs)
 	if err != nil {
+		if os.IsNotExist(err) && gitAvailable(s.ix.Root()) {
+			diffAvail := false
+			// A file a local commit deleted has nothing on disk, so the normal
+			// working-tree check below can't vouch for it. Its commit diff can.
+			if ref := q.Get("ref"); ref != "" {
+				diffAvail = gitDiffCommit(s.ix.Root(), rel, ref) != ""
+			} else if s.pr != nil {
+				diffAvail = gitDiffAgainst(s.ix.Root(), rel, s.diffBase) != "" ||
+					gitDiffBetween(s.ix.Root(), rel, s.diffBase, s.prHeadSHA) != "" ||
+					gitDiffAgainst(s.ix.Root(), rel, s.prHeadSHA) != ""
+			} else {
+				diffAvail = gitDiffAgainst(s.ix.Root(), rel, s.diffBase) != ""
+			}
+			if diffAvail {
+				d := newDoc("", rel)
+				if uiVerbose {
+					uiStatus("info", "view", fmt.Sprintf("%s · deleted (0 bytes)", rel), 0, os.Stdout)
+				}
+				writeJSON(w, map[string]any{
+					"path": rel, "lang": d.Lang, "total": 0, "maxCols": 0,
+					"start": 0, "lines": []string{}, "size": 0,
+					"exact": true, "refine": false,
+					"markdown":      isMarkdown(rel),
+					"table":         isTable(rel),
+					"diffAvailable": true,
+					"deleted":       true,
+					"lsp":           s.lspBrief(rel),
+				})
+				return
+			}
+		}
 		fail(w, 404, err.Error())
 		return
 	}
@@ -853,7 +897,11 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	_, coming := d.Exact()
 	diffAvail := false
 	if gitAvailable(s.ix.Root()) {
-		if s.pr != nil {
+		if ref := q.Get("ref"); ref != "" {
+			// Pinned to one commit: what matters is whether that commit touched
+			// the file, not whether the working tree has since diverged.
+			diffAvail = gitDiffCommit(s.ix.Root(), rel, ref) != ""
+		} else if s.pr != nil {
 			diffAvail = gitDiffAgainst(s.ix.Root(), rel, s.diffBase) != "" ||
 				gitDiffBetween(s.ix.Root(), rel, s.diffBase, s.prHeadSHA) != "" ||
 				gitDiffAgainst(s.ix.Root(), rel, s.prHeadSHA) != ""
@@ -866,6 +914,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		"start": start, "lines": lines, "size": st.Size(),
 		"exact": exact, "refine": !exact && coming,
 		"markdown":      isMarkdown(rel),
+		"table":         isTable(rel),
 		"diffAvailable": diffAvail,
 		"lsp":           s.lspBrief(rel),
 	})
@@ -884,15 +933,38 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "path": rel})
 }
 
+func setRawHeaders(w http.ResponseWriter, rel string) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	base := filepath.Base(rel)
+	cd := mime.FormatMediaType("attachment", map[string]string{
+		"filename": base,
+	})
+	if cd == "" {
+		cd = fmt.Sprintf(`attachment; filename=%q`, base)
+	}
+	w.Header().Set("Content-Disposition", cd)
+
+	ext := strings.ToLower(filepath.Ext(rel))
+	ct := ""
+	if imageExt[ext] {
+		ct = mime.TypeByExtension(ext)
+		if ct == "" {
+			ct = imageMime[ext]
+		}
+	}
+	if ct == "" || !strings.HasPrefix(ct, "image/") {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+}
+
 func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
 	abs, rel, ok := s.safePath(r.URL.Query().Get("path"))
 	if !ok {
 		fail(w, 400, "bad path")
 		return
 	}
-	if ct := mime.TypeByExtension(filepath.Ext(rel)); ct != "" {
-		w.Header().Set("Content-Type", ct)
-	}
+	setRawHeaders(w, rel)
 	http.ServeFile(w, r, abs)
 }
 
@@ -910,6 +982,20 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	_, rel, ok := s.resolvePath(r.URL.Query().Get("path"))
 	if !ok {
 		fail(w, 400, "bad path")
+		return
+	}
+	// A ref names one local commit to read instead of the working tree: the
+	// diff that commit itself made to this file, frozen regardless of what has
+	// been edited since. Empty ref -> today's working-tree-vs-diffBase diff.
+	if ref := r.URL.Query().Get("ref"); ref != "" {
+		diff := gitDiffCommit(s.ix.Root(), rel, ref)
+		writeJSON(w, map[string]any{
+			"path":      rel,
+			"ref":       ref,
+			"diff":      diff,
+			"hunks":     highlightDiff(rel, diff),
+			"available": diff != "",
+		})
 		return
 	}
 	diff := gitDiffAgainst(s.ix.Root(), rel, s.diffBase)
@@ -949,7 +1035,12 @@ func (s *Server) handleGutter(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "bad path")
 		return
 	}
-	added, modified, deleted := gitHunksAgainst(s.ix.Root(), rel, s.diffBase)
+	var added, modified, deleted []int
+	if ref := r.URL.Query().Get("ref"); ref != "" {
+		added, modified, deleted = gitHunksCommit(s.ix.Root(), rel, ref)
+	} else {
+		added, modified, deleted = gitHunksAgainst(s.ix.Root(), rel, s.diffBase)
+	}
 	nz := func(v []int) []int { // marshal as [] not null
 		if v == nil {
 			return []int{}
@@ -1197,6 +1288,17 @@ func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		// Pushed commits leave the Unpushed list but stay "yours": only the
+		// pushed boundary moves, never the PR-changes boundary (prHeadSHA).
+		s.pr.mu.Lock()
+		pushed := s.pr.remoteHead()
+		s.pr.mu.Unlock()
+		if s.ix != nil {
+			s.ix.SetPushedHead(pushed)
+		}
+		if s.gitWatcher != nil {
+			s.gitWatcher.Trigger()
+		}
 		writeJSON(w, map[string]any{"ok": true})
 		return
 	}
@@ -1241,6 +1343,7 @@ func (s *Server) handleGitPull(w http.ResponseWriter, r *http.Request) {
 		if s.ix != nil {
 			s.ix.SetDiffBase(s.diffBase)
 			s.ix.SetPRHead(s.prHeadSHA)
+			s.ix.SetPushedHead(s.prHeadSHA)
 		}
 		if s.gitWatcher != nil {
 			s.gitWatcher.Trigger()
@@ -1297,6 +1400,78 @@ func (s *Server) handleGitLog(w http.ResponseWriter, r *http.Request) {
 		"commits":    commits,
 		"commitsUrl": commitsURL,
 	})
+}
+
+// handleUnpushed lists the commits that exist locally but not on the tracking
+// branch (@{u}..HEAD), newest first, plus the name of that tracking branch so
+// the sidebar can say what the list is measured against. available is false
+// (200, empty list) when git is off, no upstream is configured, or nothing is
+// ahead -- there is no guessed fallback branch, since measuring against the
+// wrong ref is worse than showing nothing.
+func (s *Server) handleUnpushed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil {
+			limit = n
+		}
+	}
+	var upstream string
+	var commits []UnpushedCommit
+	if s.pr != nil {
+		// Detached PR checkout: your commits are everything past the PR head.
+		s.pr.mu.Lock()
+		head, branch := s.pr.remoteHead(), s.pr.meta.HeadRef
+		s.pr.mu.Unlock()
+		commits = gitCommitsSince(s.ix.Root(), head, limit)
+		upstream = fmt.Sprintf("PR #%d head (%s)", s.pr.meta.Number, branch)
+	} else {
+		upstream, commits = gitUnpushedCommits(s.ix.Root(), limit)
+	}
+	if commits == nil {
+		commits = []UnpushedCommit{}
+	}
+	writeJSON(w, map[string]any{
+		"available": upstream != "" && len(commits) > 0,
+		"upstream":  upstream,
+		"commits":   commits,
+	})
+}
+
+// handleCommitFiles returns the paths one commit touched, badged with git's
+// name-status letter. Unknown SHAs come back as an empty list, not an error:
+// the only way to ask for one is from a list px0 handed out, and a commit
+// that has since been rewritten is a stale click, not a failure worth a toast.
+func (s *Server) handleCommitFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	sha := r.URL.Query().Get("sha")
+	files := gitCommitFiles(s.ix.Root(), sha)
+	if files == nil {
+		files = []CommitFile{}
+	}
+	writeJSON(w, map[string]any{"sha": sha, "files": files})
+}
+
+// handleCommitDetail returns one commit's author, full message and diffstat
+// for the hover card.
+func (s *Server) handleCommitDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	sha := r.URL.Query().Get("sha")
+	d, ok := gitCommitDetail(s.ix.Root(), sha)
+	if !ok {
+		fail(w, http.StatusNotFound, "unknown commit")
+		return
+	}
+	writeJSON(w, d)
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -1436,6 +1611,9 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 	s.ix.Build()
 	if s.gitWatcher != nil {
 		s.gitWatcher.Trigger()
+	}
+	if s.lsp != nil {
+		s.lsp.RefreshOpenDocs()
 	}
 	n, _, ms := s.ix.Stats()
 	gitCount, gitFiles := s.ix.GitChanges()
