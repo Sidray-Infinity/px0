@@ -132,10 +132,13 @@ export const CHUNK = 1000, OVERSCAN = 24;
  * @property {number} [mdScroll]
  * @property {string} [mdError]
  * @property {string} [mdHtml]
+ * @property {boolean} [table]
+ * @property {{header: string[], headerLine: number, rows: {line: number, cells: string[]}[], cols: number, truncated: boolean}} [tableData]
  * @property {any} [mdReq]
  * @property {boolean} [prCollapsed]
  * @property {boolean} [youCollapsed]
  * @property {{line: number, col: number}|null} [selAnchor]
+ * @property {string} [diffRef] - commit SHA the tab is diffing, '' for the working tree
  * @property {string} [diffText]
  * @property {any} [diffHunks]
  * @property {number} [mdLine]
@@ -184,8 +187,10 @@ export const CHUNK = 1000, OVERSCAN = 24;
  * @property {boolean} wrap
  * @property {boolean} lineNumbers
  * @property {boolean} mdPreview
+ * @property {boolean} tablePreview
  * @property {any} settings
  * @property {Array<{id: string, path: string, l1: number, l2: number}>} agentTargets
+ * @property {number} unpushedCount
  */
 
 /** @type {AppState} */
@@ -208,8 +213,10 @@ export const S = {
   wrap: true,        // word wrap (default ON)
   lineNumbers: true, // line numbers gutter (default ON)
   mdPreview: true,   // Markdown tabs open rendered (default ON)
+  tablePreview: true, // CSV and TSV tabs open as a table (default ON)
   settings: null,    // loaded from /api/settings
   agentTargets: [],  // [{ id, path, l1, l2 }, ...] ranges of open compose/edit sessions
+  unpushedCount: 0,  // commits ahead of the tracking branch; owned by unpushed.js
 };
 
 /** @returns {DocTab|null} */

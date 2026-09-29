@@ -9,6 +9,7 @@ import { reindexWorkspace } from './panels.js';
 import { refreshPRMeta } from './pr.js';
 import { openSettings } from './settings.js';
 import { layout, render } from './renderer.js';
+import { refreshUnpushed } from './unpushed.js';
 
 const panel = () => $('#git-panel');
 
@@ -131,10 +132,12 @@ export function updateGitPanel(payload) {
     pushBtn.disabled = ahead === 0;
     if (ahead > 0) {
       pushBtn.textContent = `Push (${ahead})`;
-      pushBtn.title = `Push ${ahead} unpushed commit${ahead > 1 ? 's' : ''} to remote`;
+      pushBtn.title = S.meta?.pr
+        ? `Push ${ahead} of your commit${ahead > 1 ? 's' : ''} to PR #${S.meta.pr.number} (${S.meta.pr.head})`
+        : `Push ${ahead} unpushed commit${ahead > 1 ? 's' : ''} to remote`;
     } else {
       pushBtn.textContent = 'Push';
-      pushBtn.title = 'No unpushed commits to push';
+      pushBtn.title = S.meta?.pr ? 'Commit your changes to push them to this PR' : 'No unpushed commits to push';
     }
   }
 
@@ -248,6 +251,7 @@ async function doCommit() {
       flashActionSuccess(btn, 'Committed');
     }
     await fetchRecentCommits();
+    await refreshUnpushed();
   } catch (e) {
     if (btn) btn.textContent = prevText;
     showToast('!', e.message || 'Commit failed');
@@ -265,13 +269,14 @@ async function doPush() {
   }
   try {
     await apiPostJson('/api/git/push', {});
-    showToast('✓', 'Pushed');
+    showToast('✓', S.meta?.pr ? `Pushed to PR #${S.meta.pr.number}` : 'Pushed');
     if (btn) {
       btn.textContent = 'Push';
       flashActionSuccess(btn, 'Pushed');
       btn.title = 'No unpushed commits to push';
       btn.disabled = true;
     }
+    await refreshUnpushed(); // the section empties out with the push
   } catch (e) {
     if (btn) btn.textContent = prevText;
     showToast('!', e.message || 'Push failed');
@@ -296,6 +301,7 @@ async function doPull() {
     await reindexWorkspace();
     if (S.meta?.pr) await refreshPRMeta();
     await fetchRecentCommits();
+    await refreshUnpushed();
   } catch (e) {
     if (btn) btn.textContent = prevText;
     showToast('!', e.message || 'Pull failed');
@@ -431,6 +437,7 @@ async function commitWithMessage(message, btn) {
     }
     showToast('✓', 'Committed with AI');
     await fetchRecentCommits();
+    await refreshUnpushed();
     if (btn) {
       btn.textContent = 'Stage all + Commit with AI';
       flashActionSuccess(btn, 'Committed');
